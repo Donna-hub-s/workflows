@@ -210,7 +210,12 @@ def parse_definition(raw: dict | str) -> Definition:
     except ValidationError as exc:
         problems = []
         for error in exc.errors()[:5]:
-            problems.append(f"{_where(error['loc'])} : {error['msg'].removeprefix('Value error, ')}")
+            message = error["msg"].removeprefix("Value error, ")
+            if error["type"] == "union_tag_invalid":
+                # Message pydantic technique -> consigne lisible (aussi pour le modèle qui a proposé la définition).
+                allowed = ", ".join(sorted(str(tag).strip("'") for tag in error["ctx"].get("expected_tags", "").split(", ")))
+                message = f"type {error['ctx'].get('tag')!r} inconnu — types autorisés : {allowed}"
+            problems.append(f"{_where(error['loc'])} : {message}")
         raise DefinitionError("Définition invalide — " + " ; ".join(problems)) from exc
 
 

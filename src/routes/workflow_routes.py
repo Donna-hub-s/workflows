@@ -17,10 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from xcore.kernel.api import AuthPayload, get_current_user
 
-from ..definition import DefinitionError, ScheduleTrigger, canonical_json, definition_hash, parse_definition
+from ..definition import DefinitionError, canonical_json, definition_hash, parse_definition
 from ..engine import WorkflowDeps, create_run, execute_run
 from ..models import Workflow, WorkflowRun, WorkflowStepRun
-from ..schedule import next_run_after
 from ..schemas import (
     FromTemplate,
     RunOut,
@@ -31,6 +30,7 @@ from ..schemas import (
     WorkflowOut,
     WorkflowPatch,
 )
+from ..service import activate_workflow
 from ..templates import TEMPLATES
 
 MAX_WORKFLOWS_PER_USER = 50
@@ -162,14 +162,7 @@ def workflows_router(db: Any, deps: WorkflowDeps) -> APIRouter:
     async def activate(workflow_id: str, current_user: AuthPayload = Depends(get_current_user)) -> WorkflowOut:
         async with db.session() as session:
             workflow = await _owned(session, workflow_id, current_user)
-            definition = _parsed(json.loads(workflow.definition))
-            now = datetime.now(timezone.utc)
-            workflow.status = "active"
-            workflow.approved_hash = definition_hash(definition)
-            workflow.approved_at = now
-            workflow.next_run_at = (
-                next_run_after(definition.trigger, now) if isinstance(definition.trigger, ScheduleTrigger) else None
-            )
+            activate_workflow(workflow, _parsed(json.loads(workflow.definition)), datetime.now(timezone.utc))
             await session.flush()
             return _to_out(workflow)
 

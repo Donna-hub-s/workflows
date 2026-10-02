@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from xcore.sdk import AutoDispatchMixin, TrustedBase, get_logger
 
 from .engine import WorkflowDeps
+from .ipc import IPCCommands
 from .models import Base
 from .routes.workflow_routes import workflows_router
 from .runner import run_scheduler
@@ -14,7 +15,7 @@ from .runner import run_scheduler
 logger = get_logger("workflows.plugin")
 
 
-class Plugin(AutoDispatchMixin, TrustedBase):
+class Plugin(IPCCommands, AutoDispatchMixin, TrustedBase):
     async def on_load(self) -> None:
         self._db = self.get_service("db")
 
