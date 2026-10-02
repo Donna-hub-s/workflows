@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from xcore.kernel.api import AuthPayload, get_current_user
 
-from ..definition import DefinitionError, canonical_json, definition_hash, parse_definition
+from ..definition import DefinitionError, canonical_json, default_max_runs, definition_hash, parse_definition
 from ..engine import WorkflowDeps, create_run, execute_run
 from ..models import Workflow, WorkflowRun, WorkflowStepRun
 from ..schemas import (
@@ -30,7 +30,7 @@ from ..schemas import (
     WorkflowOut,
     WorkflowPatch,
 )
-from ..service import activate_workflow
+from ..service import activate_workflow, describe, schedule_text
 from ..templates import TEMPLATES
 
 MAX_WORKFLOWS_PER_USER = 50
@@ -46,15 +46,29 @@ def _tenant_of(current_user: AuthPayload) -> str:
     return tenant_id
 
 
+def _detail(raw: str | None) -> list | None:
+    """Journal d'outils d'une étape « agent » (JSON en base), ou None s'il est absent ou illisible."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    return value if isinstance(value, list) else None
+
+
 def _to_out(workflow: Workflow) -> WorkflowOut:
     try:
         definition = json.loads(workflow.definition)
-        approved = workflow.approved_hash is not None and workflow.approved_hash == definition_hash(parse_definition(definition))
+        parsed = parse_definition(definition)
+        approved = workflow.approved_hash is not None and workflow.approved_hash == definition_hash(parsed)
+        schedule, lines = schedule_text(parsed.trigger), describe(parsed)
     except (ValueError, DefinitionError):
-        definition, approved = {}, False
+        definition, approved, schedule, lines = {}, False, "définition illisible", []
     return WorkflowOut(
         id=workflow.id, name=workflow.name, description=workflow.description, status=workflow.status,
-        origin=workflow.origin, definition=definition, approved=approved, next_run_at=workflow.next_run_at,
+        origin=workflow.origin, definition=definition, approved=approved, schedule=schedule, lines=lines,
+        next_run_at=workflow.next_run_at,
         last_run_at=workflow.last_run_at, max_runs_per_day=workflow.max_runs_per_day,
         conversation_id=workflow.conversation_id, created_at=workflow.created_at, updated_at=workflow.updated_at,
     )
@@ -81,7 +95,7 @@ def workflows_router(db: Any, deps: WorkflowDeps) -> APIRouter:
             raise HTTPException(404, "Workflow introuvable.")
         return workflow
 
-    async def _create(current_user: AuthPayload, name: str, description: str | None, definition, origin: str, max_runs: int = 24) -> WorkflowOut:
+    async def _create(current_user: AuthPayload, name: str, description: str | None, definition, origin: str, max_runs: int | None = None) -> WorkflowOut:
         tenant_id = _tenant_of(current_user)
         async with db.session() as session:
             count = len(
@@ -97,7 +111,8 @@ def workflows_router(db: Any, deps: WorkflowDeps) -> APIRouter:
                 raise HTTPException(409, f"{MAX_WORKFLOWS_PER_USER} workflows maximum : archive-en un avant d'en créer un autre.")
             workflow = Workflow(
                 tenant_id=tenant_id, user_id=current_user["sub"], name=name, description=description,
-                definition=canonical_json(definition), status="draft", origin=origin, max_runs_per_day=max_runs,
+                definition=canonical_json(definition), status="draft", origin=origin,
+                max_runs_per_day=max_runs or default_max_runs(definition),
             )
             session.add(workflow)
             await session.flush()
@@ -213,7 +228,10 @@ def workflows_router(db: Any, deps: WorkflowDeps) -> APIRouter:
                         id=run.id, status=run.status, trigger=run.trigger, error=run.error, started_at=run.started_at,
                         finished_at=run.finished_at,
                         steps=[
-                            StepRunOut(position=s.position, step_id=s.step_id, type=s.type, status=s.status, output=s.output, error=s.error)
+                            StepRunOut(
+                                position=s.position, step_id=s.step_id, type=s.type, status=s.status, output=s.output,
+                                error=s.error, detail=_detail(s.detail),
+                            )
                             for s in steps
                         ],
                     )

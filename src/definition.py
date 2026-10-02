@@ -21,10 +21,29 @@ import re
 from typing import Annotated, Literal, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, TypeAdapter, ValidationError, field_validator, model_validator
 
 MAX_STEPS = 20
 MAX_INSTRUCTION_CHARS = 2000
+MAX_AGENT_ROUNDS = 12
+MAX_DRAFT_EMAIL_STEPS = 3
+TRIGGER_REF = "trigger"  # identifiant réservé : ce qui a déclenché un run (événement) comme sortie d'étape
+
+# Outils que l'étape « agent » peut recevoir : liste FERMÉE, fixée dans la définition que l'utilisateur approuve.
+# Aucun outil d'envoi ni d'approbation (propose_*, confirm_action…) : ce que l'agent produit ne sort de
+# l'application que par une étape « notify » (vers l'utilisateur lui-même) ou une action en attente.
+# Les noms sont ceux des outils du chat (app/chat/src/tools.py).
+AGENT_READ_TOOLS = (
+    "search_documents", "read_document", "inspect_table", "read_image",
+    "search_emails", "list_upcoming_events", "search_drive_files", "read_drive_file",
+)
+AGENT_WRITE_TOOLS = ("create_document", "run_python")  # écrivent dans le dossier de documents de l'utilisateur
+AGENT_TOOLS = AGENT_READ_TOOLS + AGENT_WRITE_TOOLS
+AgentTool = Literal[
+    "search_documents", "read_document", "inspect_table", "read_image",
+    "search_emails", "list_upcoming_events", "search_drive_files", "read_drive_file",
+    "create_document", "run_python",
+]
 # Motifs en chaîne + re.match (et non re.compile) : l'analyse statique du plugin signale l'attribut `compile`.
 STEP_ID_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
 TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
@@ -80,10 +99,50 @@ class ScheduleTrigger(_Strict):
         return self
 
 
-Trigger = Annotated[Union[ManualTrigger, ScheduleTrigger], Field(discriminator="type")]
+class EmailReceivedTrigger(_Strict):
+    """Un nouvel email correspond à une recherche Gmail. Vérifié toutes les `every_minutes` minutes ; les emails déjà
+    présents à l'activation ne déclenchent rien (seuls les nouveaux comptent)."""
+
+    type: Literal["email_received"]
+    query: str = Field(min_length=1, max_length=200)  # syntaxe de recherche Gmail
+    every_minutes: int = Field(10, ge=5, le=60)
+
+
+class WorkflowFinishedTrigger(_Strict):
+    """Un autre workflow de l'utilisateur vient de se terminer — pour les enchaîner. Les enchaînements sont limités en
+    profondeur (le plugin refuse les boucles)."""
+
+    type: Literal["workflow_finished"]
+    workflow_id: str = Field(min_length=1, max_length=36)
+    on: Literal["success", "failure", "any"] = "success"
+
+
+EVENT_TRIGGER_TYPES = ("email_received", "workflow_finished")
+
+Trigger = Annotated[
+    Union[ManualTrigger, ScheduleTrigger, EmailReceivedTrigger, WorkflowFinishedTrigger], Field(discriminator="type")
+]
 
 
 # ── Étapes ────────────────────────────────────────────────────────────────────
+
+
+class Guard(_Strict):
+    """Condition d'exécution d'une étape (« seulement si… ») sur la sortie d'une étape précédente.
+    Comparaison de texte uniquement : aucune expression évaluée, rien d'exécutable."""
+
+    step: str
+    op: Literal["has_results", "no_results", "contains", "not_contains"]
+    value: str | None = Field(default=None, min_length=1, max_length=200)  # requis pour contains / not_contains
+
+    @model_validator(mode="after")
+    def _value(self) -> "Guard":
+        needs = self.op in ("contains", "not_contains")
+        if needs and not self.value:
+            raise ValueError(f"la condition « {self.op} » demande une valeur à chercher.")
+        if not needs and self.value is not None:
+            raise ValueError(f"la condition « {self.op} » n'a pas de valeur.")
+        return self
 
 
 class _Step(_Strict):
@@ -91,6 +150,8 @@ class _Step(_Strict):
     # Étape facultative : si elle échoue (ou si sa compétence est coupée), le workflow continue avec une
     # note « indisponible » au lieu de s'arrêter.
     optional: bool = False
+    # Condition : l'étape est ignorée (et son résultat reste vide) si elle n'est pas remplie.
+    only_if: Guard | None = None
 
     @field_validator("id")
     @classmethod
@@ -128,6 +189,50 @@ class LlmSummarizeStep(_Step):
     max_words: int = Field(150, ge=20, le=500)
 
 
+class AgentStep(_Step):
+    """Étape « agentique » : DONNA travaille par elle-même avec la boucle d'outils du chat (lire, chercher, analyser,
+    calculer, rédiger), dans les limites de la définition approuvée : ces outils-là seulement, ce nombre de tours
+    au plus, ce délai. Elle décide quoi lire et quand s'arrêter ; elle ne peut ni ajouter d'outil, ni envoyer
+    quoi que ce soit. Les données lues (documents, emails) restent de la donnée, jamais des instructions."""
+
+    type: Literal["agent"]
+    goal: str = Field(min_length=1, max_length=MAX_INSTRUCTION_CHARS)
+    tools: list[AgentTool] = Field(min_length=1, max_length=len(AGENT_TOOLS))
+    inputs: list[str] = Field(default_factory=list, max_length=10)  # sorties d'étapes précédentes (données)
+    project_id: str | None = Field(default=None, min_length=1, max_length=36)  # périmètre documentaire
+    max_rounds: int = Field(8, ge=1, le=MAX_AGENT_ROUNDS)
+    max_words: int = Field(300, ge=20, le=800)
+
+    @field_validator("tools")
+    @classmethod
+    def _unique_tools(cls, value: list[str]) -> list[str]:
+        return list(dict.fromkeys(value))
+
+
+class DraftEmailStep(_Step):
+    """Prépare un email à un TIERS — jamais ne l'envoie : il apparaît dans les actions à approuver, et l'utilisateur
+    l'approuve (ou non) À CHAQUE exécution, après avoir lu le texte. Le destinataire et l'objet sont fixés ici, dans la
+    définition que l'utilisateur approuve ; seul le corps vient d'une étape précédente."""
+
+    type: Literal["draft_email"]
+    to: EmailStr
+    subject: str = Field(min_length=1, max_length=200)
+    source: str  # étape dont la sortie devient le corps du message
+    attach_files: bool | None = None  # joint les fichiers produits par les étapes « agent » de ce run
+
+    @field_validator("subject")
+    @classmethod
+    def _one_line(cls, value: str) -> str:
+        if "\n" in value or "\r" in value:
+            raise ValueError("l'objet tient sur une seule ligne.")
+        return value
+
+    @field_validator("attach_files")
+    @classmethod
+    def _attach(cls, value: bool | None) -> bool | None:
+        return True if value else None
+
+
 class NotifyStep(_Step):
     """Message à l'UTILISATEUR LUI-MÊME uniquement (application, son numéro WhatsApp, son email) — jamais
     un tiers : c'est ce qui permet de l'exécuter sans approbation à chaque fois."""
@@ -136,6 +241,14 @@ class NotifyStep(_Step):
     source: str
     title: str = Field(min_length=1, max_length=80)
     channels: list[Literal["app", "whatsapp", "email"]] = Field(min_length=1, max_length=3)
+    # Joint à la notification de l'application les fichiers produits par les étapes « agent » de ce run.
+    # None (et non False) quand absent : l'empreinte des notify déjà approuvés ne doit pas changer.
+    attach_files: bool | None = None
+
+    @field_validator("attach_files")
+    @classmethod
+    def _attach(cls, value: bool | None) -> bool | None:
+        return True if value else None
 
     @field_validator("channels")
     @classmethod
@@ -144,7 +257,10 @@ class NotifyStep(_Step):
 
 
 Step = Annotated[
-    Union[ListEventsStep, SearchEmailsStep, ListRemindersStep, ListPendingActionsStep, LlmSummarizeStep, NotifyStep],
+    Union[
+        ListEventsStep, SearchEmailsStep, ListRemindersStep, ListPendingActionsStep, LlmSummarizeStep, AgentStep,
+        DraftEmailStep, NotifyStep,
+    ],
     Field(discriminator="type"),
 ]
 
@@ -156,6 +272,8 @@ STEP_RISK: dict[str, str] = {
     "list_reminders": "read",
     "list_pending_actions": "read",
     "llm_summarize": "read",
+    "agent": "write",  # peut écrire des documents (create_document, run_python) dans le dossier de l'utilisateur
+    "draft_email": "outbound",  # un tiers est destinataire — mais seulement après approbation humaine à chaque run
     "notify": "write",
 }
 
@@ -166,19 +284,28 @@ class Definition(_Strict):
 
     @model_validator(mode="after")
     def _references(self) -> "Definition":
-        seen: set[str] = set()
+        # Un déclencheur par événement fournit « trigger » (ce qui l'a déclenché) comme une sortie d'étape.
+        is_event = self.trigger.type in EVENT_TRIGGER_TYPES
+        seen: set[str] = {TRIGGER_REF} if is_event else set()
         for step in self.steps:
+            if step.id == TRIGGER_REF:
+                raise ValueError(f"L'identifiant {TRIGGER_REF!r} est réservé.")
             if step.id in seen:
                 raise ValueError(f"Identifiant d'étape en double : {step.id!r}.")
             refs: list[str] = []
-            if isinstance(step, LlmSummarizeStep):
-                refs = step.inputs
-            elif isinstance(step, NotifyStep):
+            if isinstance(step, (LlmSummarizeStep, AgentStep)):
+                refs = list(step.inputs)
+            elif isinstance(step, (NotifyStep, DraftEmailStep)):
                 refs = [step.source]
+            if step.only_if is not None:
+                refs.append(step.only_if.step)
             for ref in refs:
                 if ref not in seen:
-                    raise ValueError(f"L'étape {step.id!r} utilise {ref!r}, qui n'existe pas ou vient plus tard.")
+                    hint = f" (« {TRIGGER_REF} » n'existe que pour un déclencheur par événement)" if ref == TRIGGER_REF else ""
+                    raise ValueError(f"L'étape {step.id!r} utilise {ref!r}, qui n'existe pas ou vient plus tard{hint}.")
             seen.add(step.id)
+        if sum(isinstance(step, DraftEmailStep) for step in self.steps) > MAX_DRAFT_EMAIL_STEPS:
+            raise ValueError(f"{MAX_DRAFT_EMAIL_STEPS} emails à approuver par exécution au plus.")
         return self
 
 
@@ -198,6 +325,18 @@ def _where(loc: tuple) -> str:
         else:
             parts.append(str(part))
     return " › ".join(parts) or "définition"
+
+
+DEFAULT_MAX_RUNS_PER_DAY = 24
+# Une exécution d'agent consomme beaucoup de jetons (plusieurs appels au modèle, jusqu'à 12 tours) : le plafond par
+# défaut est plus bas que pour un briefing. L'utilisateur peut le relever (jusqu'à 96) dans les réglages du workflow.
+AGENT_DEFAULT_MAX_RUNS_PER_DAY = 6
+
+
+def default_max_runs(definition: Definition) -> int:
+    """Plafond d'exécutions par jour d'un nouveau workflow, selon ce qu'il fait."""
+    uses_agent = any(isinstance(step, AgentStep) for step in definition.steps)
+    return AGENT_DEFAULT_MAX_RUNS_PER_DAY if uses_agent else DEFAULT_MAX_RUNS_PER_DAY
 
 
 def parse_definition(raw: dict | str) -> Definition:
@@ -220,7 +359,9 @@ def parse_definition(raw: dict | str) -> Definition:
 
 
 def canonical_json(definition: Definition) -> str:
-    return json.dumps(definition.model_dump(mode="json"), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    # exclude_none : un champ facultatif ajouté plus tard (valeur None) ne change pas l'empreinte des définitions
+    # déjà approuvées — sinon chaque évolution du format désapprouverait les workflows existants.
+    return json.dumps(definition.model_dump(mode="json", exclude_none=True), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def definition_hash(definition: Definition) -> str:

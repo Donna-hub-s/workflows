@@ -7,7 +7,7 @@ from typing import TypedDict
 from sqlalchemy import select
 from xcore.sdk import AutoDispatchMixin, action, error, ok, validate_payload
 
-from .definition import DefinitionError, canonical_json, definition_hash, parse_definition
+from .definition import DefinitionError, canonical_json, default_max_runs, definition_hash, parse_definition
 from .models import Workflow
 from .service import activate_workflow, describe, schedule_text
 from .templates import TEMPLATES
@@ -93,7 +93,7 @@ class IPCCommands(AutoDispatchMixin):
             workflow = Workflow(
                 tenant_id=payload.tenant_id, user_id=payload.user_id, name=payload.name[:120],
                 description=(getattr(payload, "description", None) or None), definition=canonical_json(definition),
-                status="draft", origin="donna",
+                status="draft", origin="donna", max_runs_per_day=default_max_runs(definition),
             )
             session.add(workflow)
             await session.flush()

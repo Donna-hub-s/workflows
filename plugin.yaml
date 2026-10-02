@@ -5,7 +5,7 @@ description: >
   Automatisations de Donna (workflows) — recettes validées par l'utilisateur (déclencheur + étapes), exécutées
   seules à l'heure dite, avec journal d'exécutions et plafonds. Ce plugin possède les définitions, la
   planification et le journal ; tout ce qui demande Google, WhatsApp ou le modèle passe par les actions IPC
-  du plugin chat (chat.workflow_read / summarize / notify), qui gardent leurs garde-fous (compétences coupées,
+  du plugin chat (chat.workflow_read / summarize / agent / notify), qui gardent leurs garde-fous (compétences coupées,
   notification à soi seulement, données lues traitées comme non fiables). DONNA peut proposer un workflow,
   jamais l'activer : l'activation est un geste de l'utilisateur.
 

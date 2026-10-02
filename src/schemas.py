@@ -10,7 +10,8 @@ class WorkflowCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str | None = Field(default=None, max_length=500)
     definition: dict
-    max_runs_per_day: int = Field(24, ge=1, le=96)
+    # None = plafond par défaut selon la définition (voir definition.default_max_runs : plus bas avec un agent).
+    max_runs_per_day: int | None = Field(default=None, ge=1, le=96)
 
 
 class WorkflowPatch(BaseModel):
@@ -42,6 +43,8 @@ class WorkflowOut(BaseModel):
     origin: str
     definition: dict
     approved: bool  # la définition courante est celle que l'utilisateur a approuvée
+    schedule: str  # déclencheur en clair (« Chaque jour ouvré à 08:00 (Europe/Paris) »)
+    lines: list[str]  # ce que l'utilisateur approuve : le déclencheur puis une ligne par étape
     next_run_at: datetime | None
     last_run_at: datetime | None
     max_runs_per_day: int
@@ -57,6 +60,8 @@ class StepRunOut(BaseModel):
     status: str
     output: str | None
     error: str | None
+    # Étape « agent » : outils appelés, dans l'ordre ({name, arguments, result}) — pour voir ce que DONNA a fait.
+    detail: list[dict] | None = None
 
 
 class RunOut(BaseModel):

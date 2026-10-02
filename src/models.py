@@ -46,6 +46,8 @@ class Workflow(Base):
     max_runs_per_day: Mapped[int] = mapped_column(Integer, default=24)
     # Conversation où la notification « application » dépose ses messages (créée par le chat à la première).
     conversation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    # JSON : état d'un déclencheur par événement (emails déjà vus…) — colonne ajoutée par ALTER TABLE (voir main.py).
+    state: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
@@ -59,7 +61,11 @@ class WorkflowRun(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     # running | succeeded | failed | skipped (plafond atteint, retard trop grand…)
     status: Mapped[str] = mapped_column(String(16), default="running", index=True)
-    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | event
+    # Ce qui a déclenché un run par événement (emails reçus, workflow terminé…) : la sortie « trigger » des étapes.
+    # Colonnes ajoutées par ALTER TABLE (voir main.py).
+    trigger_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, default=0)  # profondeur d'enchaînement (workflow_finished)
     definition_hash: Mapped[str] = mapped_column(String(64))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
@@ -79,5 +85,8 @@ class WorkflowStepRun(Base):
     # Sortie tronquée (historique) ; la sortie complète ne sert qu'aux étapes suivantes, en mémoire.
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # JSON : journal des outils appelés par une étape « agent » (nom, arguments, début du résultat) — colonne
+    # ajoutée par ALTER TABLE (voir main.py).
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -6,6 +6,8 @@ import contextlib
 from fastapi import APIRouter
 from xcore.sdk import AutoDispatchMixin, TrustedBase, get_logger
 
+from extensions.db_columns import ensure_columns
+
 from .engine import WorkflowDeps
 from .ipc import IPCCommands
 from .models import Base
@@ -21,6 +23,12 @@ class Plugin(IPCCommands, AutoDispatchMixin, TrustedBase):
 
         async with self._db.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            # create_all ne modifie jamais une table existante : nouvelles colonnes par ALTER TABLE.
+            await ensure_columns(conn, "workflows_step_runs", (("detail", "TEXT", "TEXT"),), logger)
+            await ensure_columns(conn, "workflows_workflows", (("state", "TEXT", "TEXT"),), logger)
+            await ensure_columns(
+                conn, "workflows_runs", (("trigger_context", "TEXT", "TEXT"), ("depth", "INTEGER NOT NULL DEFAULT 0", "INTEGER NOT NULL DEFAULT 0")), logger
+            )
 
         # Tout ce qui demande Google, le modèle ou WhatsApp passe par l'IPC du plugin chat (steps.py).
         self._deps = WorkflowDeps(db=self._db, call_plugin=self.call_plugin)
