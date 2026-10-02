@@ -1,0 +1,51 @@
+name: workflows
+version: 1.0.0
+author: donna
+description: >
+  Automatisations de Donna (workflows) — recettes validées par l'utilisateur (déclencheur + étapes), exécutées
+  seules à l'heure dite, avec journal d'exécutions et plafonds. Ce plugin possède les définitions, la
+  planification et le journal ; tout ce qui demande Google, WhatsApp ou le modèle passe par les actions IPC
+  du plugin chat (chat.workflow_read / summarize / notify), qui gardent leurs garde-fous (compétences coupées,
+  notification à soi seulement, données lues traitées comme non fiables). DONNA peut proposer un workflow,
+  jamais l'activer : l'activation est un geste de l'utilisateur.
+
+execution_mode: trusted
+entry_point: src/main.py
+framework_version: ">=2.0.0"
+
+requires:
+  - name: auth
+    version: ">=1.0.0,<2.0.0"
+  - name: chat
+    version: ">=1.0.0,<2.0.0"
+
+allowed_imports:
+  - fastapi
+  - typing
+  - datetime
+  - uuid
+  - sqlalchemy
+  - pydantic
+  - zoneinfo
+  - re
+  - json
+  - hashlib
+  - asyncio
+  - contextlib
+  - dataclasses
+
+# Vide = deny_all côté PermissionEngine (même piège que profile/xauth) : sans ce bloc, les appels IPC
+# vers `workflows.*` (propose_workflow, côté chat) seraient refusés en silence.
+permissions:
+  - resource: "workflows.*"
+    actions: ["*"]
+    effect: "allow"
+
+resources:
+  timeout_seconds: 30
+  max_memory_mb: 256
+
+runtime:
+  health_check:
+    enabled: true
+    interval_seconds: 60
