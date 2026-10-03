@@ -91,7 +91,10 @@ async def llm_summarize(env: StepEnv, step: LlmSummarizeStep) -> str:
     blocks = {ref: env.outputs.get(ref, "") for ref in step.inputs}
     result = await _chat(
         env, "chat.workflow_summarize",
-        {"instruction": step.instruction, "blocks": blocks, "max_words": step.max_words},
+        {
+            "instruction": step.instruction, "blocks": blocks, "max_words": step.max_words,
+            "tenant_id": env.tenant_id, "user_id": env.user_id, "workflow_id": env.workflow_id,
+        },
     )
     return str(result.get("text") or "")
 
