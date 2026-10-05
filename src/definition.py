@@ -189,6 +189,15 @@ class LlmSummarizeStep(_Step):
     max_words: int = Field(150, ge=20, le=500)
 
 
+class AgentRef(_Strict):
+    """Un agent de projet (voir app/chat/src/agents.py) figé À UNE VERSION. Les versions d'un agent ne changent jamais : tant que
+    l'utilisateur n'a pas approuvé une autre version, c'est exactement ce texte de consignes qui s'applique — qu'un membre du
+    projet modifie l'agent entre-temps ne change rien au comportement de ce workflow."""
+
+    id: str = Field(min_length=1, max_length=36)
+    version: int = Field(ge=1, le=1_000_000)
+
+
 class AgentStep(_Step):
     """Étape « agentique » : DONNA travaille par elle-même avec la boucle d'outils du chat (lire, chercher, analyser,
     calculer, rédiger), dans les limites de la définition approuvée : ces outils-là seulement, ce nombre de tours
@@ -202,11 +211,21 @@ class AgentStep(_Step):
     project_id: str | None = Field(default=None, min_length=1, max_length=36)  # périmètre documentaire
     max_rounds: int = Field(8, ge=1, le=MAX_AGENT_ROUNDS)
     max_words: int = Field(300, ge=20, le=800)
+    # Rôle d'un agent de projet, à une version précise. Il ne fait que RESTREINDRE : outils de l'étape ∩ outils de l'agent, et ses
+    # consignes passent sous les règles de DONNA. None (et non {}) quand absent : l'empreinte des définitions déjà approuvées
+    # ne doit pas changer.
+    agent_ref: AgentRef | None = None
 
     @field_validator("tools")
     @classmethod
     def _unique_tools(cls, value: list[str]) -> list[str]:
         return list(dict.fromkeys(value))
+
+    @model_validator(mode="after")
+    def _scope(self) -> "AgentStep":
+        if self.agent_ref is not None and self.project_id is not None:
+            raise ValueError("avec un agent de projet, le périmètre documentaire est le projet de l'agent : ne donne pas `project_id`.")
+        return self
 
 
 class DraftEmailStep(_Step):

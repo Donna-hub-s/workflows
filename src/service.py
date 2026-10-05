@@ -97,6 +97,8 @@ def _step_text(step) -> str:
         tools = ", ".join(_TOOL_NAMES[t] for t in step.tools)
         writes = [t for t in step.tools if t in AGENT_WRITE_TOOLS]
         scope = " dans le projet choisi" if step.project_id else ""
+        if step.agent_ref is not None:
+            scope = f" avec le rôle d'un agent de projet figé à sa version {step.agent_ref.version} (dans le projet de cet agent)"
         notice = " Peut écrire des documents dans ton dossier." if writes else ""
         return (
             f"DONNA travaille seule{scope} (outils : {tools} ; {step.max_rounds} tours au plus) sur : « {goal} »."

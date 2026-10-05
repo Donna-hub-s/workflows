@@ -107,6 +107,8 @@ async def agent(env: StepEnv, step: AgentStep) -> str:
     }
     if step.project_id:  # clé absente plutôt que None : la validation IPC refuse un None pour un str
         payload["project_id"] = step.project_id
+    if step.agent_ref is not None:
+        payload["agent_ref"] = {"id": step.agent_ref.id, "version": step.agent_ref.version}
     result = await _chat(env, "chat.workflow_agent", payload)
     env.files.extend(result.get("files") or [])
     env.traces[step.id] = result.get("trace") or []
