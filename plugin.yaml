@@ -41,6 +41,34 @@ permissions:
     actions: ["*"]
     effect: "allow"
 
+# ── RBAC — catalogue des actions IPC (voir profile/plugin.yaml pour la convention du format) ────────────────
+rbac:
+  grants: []  # aucune permission propre : chaque action porte sur les workflows DE l'appelant, jamais ceux d'un autre
+  actions:
+    - action: "workflows.propose"
+      tier: users
+      requires: []
+      description: "Crée un brouillon de workflow pour l'appelant (scopé tenant_id/user_id du jeton) — jamais activé par cette action."
+    - action: "workflows.activate"
+      tier: users
+      requires: []
+      description: >
+        Active un brouillon PROPOSÉ par DONNA, appelée uniquement quand l'UTILISATEUR confirme via l'interface —
+        exige `expected_hash` (empreinte vue et approuvée) : le geste d'activation lui-même est la garantie, pas
+        une permission RBAC supplémentaire.
+    - action: "workflows.discard"
+      tier: users
+      requires: []
+      description: "Archive un brouillon non approuvé (refus de l'utilisateur) — ne touche jamais un workflow déjà actif."
+    - action: "workflows.list"
+      tier: users
+      requires: []
+      description: "Liste les workflows DE l'appelant."
+    - action: "workflows.pause"
+      tier: users
+      requires: []
+      description: "Met en pause un workflow DE l'appelant — retirer une capacité ne demande pas d'approbation ni de permission élevée."
+
 resources:
   timeout_seconds: 30
   max_memory_mb: 256
