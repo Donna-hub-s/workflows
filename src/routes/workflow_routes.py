@@ -22,6 +22,7 @@ from ..engine import WorkflowDeps, create_run, execute_run
 from ..models import Workflow, WorkflowRun, WorkflowStepRun
 from ..schemas import (
     FromTemplate,
+    RecentRunOut,
     RunOut,
     RunStarted,
     StepRunOut,
@@ -35,6 +36,9 @@ from ..templates import TEMPLATES
 
 MAX_WORKFLOWS_PER_USER = 50
 RUNS_SHOWN = 20
+RECENT_RUNS_DEFAULT = 10
+RECENT_RUNS_MAX = 50
+ERROR_SHOWN = 200  # la liste ne montre qu'un début de message : le détail est dans l'historique d'un workflow
 
 _background: set[asyncio.Task] = set()
 
@@ -145,6 +149,33 @@ def workflows_router(db: Any, deps: WorkflowDeps) -> APIRouter:
                 )
             ).scalars().all()
             return [_to_out(row) for row in rows]
+
+    # Déclarée AVANT « /{workflow_id} » : FastAPI prend la première route qui correspond, et « runs » y passerait pour un identifiant.
+    @router.get("/runs", summary="Mes dernières exécutions, toutes automatisations confondues", response_model=list[RecentRunOut])
+    async def recent_runs(limit: int = RECENT_RUNS_DEFAULT, current_user: AuthPayload = Depends(get_current_user)) -> list[RecentRunOut]:
+        # Tenant et utilisateur viennent du jeton, jamais d'un paramètre : comme le reste de ce routeur, et comme /usage/me.
+        tenant_id, user_id = _tenant_of(current_user), current_user["sub"]
+        async with db.session() as session:
+            rows = (
+                await session.execute(
+                    select(WorkflowRun, Workflow.name, Workflow.conversation_id)
+                    .join(Workflow, Workflow.id == WorkflowRun.workflow_id)
+                    .where(
+                        WorkflowRun.tenant_id == tenant_id, WorkflowRun.user_id == user_id,
+                        Workflow.tenant_id == tenant_id, Workflow.user_id == user_id, Workflow.status != "archived",
+                    )
+                    .order_by(WorkflowRun.started_at.desc())
+                    .limit(max(1, min(limit, RECENT_RUNS_MAX)))
+                )
+            ).all()
+        return [
+            RecentRunOut(
+                id=run.id, workflow_id=run.workflow_id, workflow_name=name, status=run.status, trigger=run.trigger,
+                error=(run.error or "")[:ERROR_SHOWN] or None, started_at=run.started_at, finished_at=run.finished_at,
+                conversation_id=conversation_id,
+            )
+            for run, name, conversation_id in rows
+        ]
 
     @router.post("/", summary="Créer un workflow (brouillon)", response_model=WorkflowOut, status_code=201)
     async def create_workflow(body: WorkflowCreate, current_user: AuthPayload = Depends(get_current_user)) -> WorkflowOut:

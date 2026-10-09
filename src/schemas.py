@@ -74,5 +74,21 @@ class RunOut(BaseModel):
     steps: list[StepRunOut] = Field(default_factory=list)
 
 
+class RecentRunOut(BaseModel):
+    """Une exécution dans la liste « toutes mes automatisations » : métadonnées seulement — ni les sorties des étapes,
+    ni le journal d'outils (ils restent derrière `GET /{workflow_id}/runs`)."""
+
+    id: str
+    workflow_id: str
+    workflow_name: str
+    status: str
+    trigger: str
+    error: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+    # Conversation où la notification « application » du workflow dépose ses messages (peut ne pas exister encore).
+    conversation_id: str | None = None
+
+
 class RunStarted(BaseModel):
     run_id: str
