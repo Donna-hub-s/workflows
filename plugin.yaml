@@ -64,10 +64,19 @@ rbac:
       tier: users
       requires: []
       description: "Liste les workflows DE l'appelant."
+      # Exposée comme tool d'un sous-agent (extensions/ipc_bridge, voir profile.get pour le premier essai) :
+      # workflows est un plugin MÉTIER (pas de l'infra comme xauth/xpulses), seconde preuve du mécanisme sur un
+      # plugin séparé. Paramètres/permissions/risque résolus depuis schema_registry (@action/@schema sur
+      # _ipc_list, app/workflows/src/ipc.py) — jamais dupliqués ici. propose/activate/discard restent HORS de
+      # cet agent : propose a besoin du wrapping pending-action, activate est un geste humain exclusif
+      # (AGENTS.md), discard n'a pas d'usage identifié comme tool modèle.
+      agent: "workflow_manager"
+      agent_description: "consulte et met en pause les workflows (automatisations) de l'utilisateur."
     - action: "workflows.pause"
       tier: users
       requires: []
       description: "Met en pause un workflow DE l'appelant — retirer une capacité ne demande pas d'approbation ni de permission élevée."
+      agent: "workflow_manager"
 
 resources:
   timeout_seconds: 30

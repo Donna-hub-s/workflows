@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import TypedDict
 
 from sqlalchemy import select
-from xcore.sdk import AutoDispatchMixin, action, error, ok, validate_payload
+from xcore.sdk import AutoDispatchMixin, action, error, ok, schema, validate_payload
 
 from .definition import DefinitionError, canonical_json, default_max_runs, definition_hash, parse_definition
 from .models import Workflow
@@ -130,8 +130,11 @@ class IPCCommands(AutoDispatchMixin):
             workflow.status, workflow.next_run_at = "archived", None
             return ok(archived=True)
 
-    @action("workflows.list")
-    @validate_payload(LIST_SCHEMA, type_response="model", unset=False)  # type: ignore
+    @action("workflows.list", side_effect="read")
+    @schema(
+        version="1.0", input=LIST_SCHEMA, description="Liste les workflows DE l'appelant.",
+        type_response="model", unset=False,
+    )  # type: ignore
     async def _ipc_list(self, payload) -> dict:
         async with self._db.session() as session:  # type: ignore
             rows = (
@@ -154,8 +157,12 @@ class IPCCommands(AutoDispatchMixin):
                 })
             return ok(workflows=items)
 
-    @action("workflows.pause")
-    @validate_payload(OWNED_SCHEMA, type_response="model", unset=False)  # type: ignore
+    @action("workflows.pause", side_effect="write")
+    @schema(
+        version="1.0", input=OWNED_SCHEMA,
+        description="Met en pause un workflow DE l'appelant — retirer une capacité ne demande pas d'approbation.",
+        type_response="model", unset=False,
+    )  # type: ignore
     async def _ipc_pause(self, payload) -> dict:
         """Mettre en pause RETIRE une capacité : DONNA peut le faire sans approbation (jamais l'inverse)."""
         async with self._db.session() as session:  # type: ignore
