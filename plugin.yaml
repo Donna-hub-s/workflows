@@ -64,19 +64,31 @@ rbac:
       tier: users
       requires: []
       description: "Liste les workflows DE l'appelant."
-      # Exposée comme tool d'un sous-agent (extensions/ipc_bridge, voir profile.get pour le premier essai) :
-      # workflows est un plugin MÉTIER (pas de l'infra comme xauth/xpulses), seconde preuve du mécanisme sur un
-      # plugin séparé. Paramètres/permissions/risque résolus depuis schema_registry (@action/@schema sur
-      # _ipc_list, app/workflows/src/ipc.py) — jamais dupliqués ici. propose/activate/discard restent HORS de
-      # cet agent : propose a besoin du wrapping pending-action, activate est un geste humain exclusif
-      # (AGENTS.md), discard n'a pas d'usage identifié comme tool modèle.
-      agent: "workflow_manager"
-      agent_description: "consulte et met en pause les workflows (automatisations) de l'utilisateur."
     - action: "workflows.pause"
       tier: users
       requires: []
       description: "Met en pause un workflow DE l'appelant — retirer une capacité ne demande pas d'approbation ni de permission élevée."
-      agent: "workflow_manager"
+
+# ── Sous-agent exposé à DONNA (extensions/ipc_bridge) ───────────────────────
+# workflows est un plugin MÉTIER (pas de l'infra comme xauth/xpulses) : seconde preuve du mécanisme sur un
+# plugin séparé, après profile. Paramètres, permissions et risque sont résolus depuis schema_registry
+# (@action/@schema sur _ipc_list / _ipc_pause, app/workflows/src/ipc.py) — jamais recopiés ici.
+# propose/activate/discard restent HORS de cet agent : propose a besoin du wrapping pending-action, activate
+# est un geste humain exclusif (AGENTS.md), discard n'a pas d'usage identifié comme tool modèle.
+agent:
+  name: "workflow_manager"
+  description: "Consulte et met en pause les workflows (automatisations) de l'utilisateur."
+  version: "1.0.0"
+  capabilities:
+    - "lister les automatisations de l'utilisateur"
+    - "mettre une automatisation en pause"
+  actions:
+    - action: "workflows.list"
+      tool_name: "list_workflows"
+      description: "Liste les workflows DE l'appelant."
+    - action: "workflows.pause"
+      tool_name: "pause_workflow"
+      description: "Met en pause un workflow DE l'appelant."
 
 resources:
   timeout_seconds: 30
