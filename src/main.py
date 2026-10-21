@@ -6,7 +6,7 @@ import contextlib
 from fastapi import APIRouter
 from xcore.sdk import AutoDispatchMixin, TrustedBase, get_logger
 
-from extensions.db_columns import ensure_columns
+from extensions.commons.db_columns import ensure_columns
 
 from .engine import WorkflowDeps
 from .ipc import IPCCommands
