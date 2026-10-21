@@ -44,7 +44,7 @@ _background: set[asyncio.Task] = set()
 
 
 def _tenant_of(current_user: AuthPayload) -> str:
-    tenant_id = (current_user.get("user") or {}).get("tenant_id")
+    tenant_id = current_user.get("tenant_id") or (current_user.get("user") or {}).get("tenant_id")
     if not tenant_id:
         raise HTTPException(403, "Aucun espace associé à ce compte.")
     return tenant_id
